@@ -1,239 +1,107 @@
-# System Metrics Agent
+# System Metrics Agent — chaîne DevSecOps
 
-Un agent Python modulaire capable de collecter les métriques système,
-de les formater et de les transmettre en temps réel vers une API ou un
-Webhook externe.
+Agent Python qui collecte CPU, RAM et charge système (`psutil` + commande
+`uptime`) et les envoie à une API FastAPI. Ce fork ajoute la
+conteneurisation, un pipeline CI/CD sécurisé et un monitoring
+Prometheus + Grafana.
 
-## Fonctionnalités
+> **Liens à compléter :**
+> Fork : `https://github.com/<vous>/system_metrics_agent` ·
+> Images : `https://hub.docker.com/r/<vous>/system-metrics-api` et
+> `https://hub.docker.com/r/<vous>/system-metrics-agent` ·
+> Pipeline vert : `<lien du run>` · Pipeline rouge : `<lien du run>`
 
-- Collecte du pourcentage CPU.
-- Collecte de la mémoire RAM totale, utilisée et disponible.
-- Utilisation de `psutil`.
-- Utilisation de **`subprocess`** pour exécuter la commande système
-  `uptime` et récupérer la charge système.
-- Architecture modulaire :
-  - `collector.py` : collecte ;
-  - `formatter.py` : normalisation du payload ;
-  - `sender.py` : envoi HTTP ;
-  - `agent.py` : orchestration ;
-  - `api.py` : API de réception avec **FastAPI**.
-- Configuration externe avec `.env`.
-- Gestion des erreurs réseau et des erreurs de collecte.
-- Tests automatisés avec `pytest`.
+## Rapport
 
-## Architecture
+**Correctifs de prise en main.** Les tests sont dans `app/tests/` et non
+`tests/` comme l'indiquait l'ancien README, et `test_api.py` n'existait pas :
+il a été ajouté (avec des tests de `config.py` et `agent.py`). Le fichier
+mort `app/montFichier.py` (import inutilisé, cassait flake8) a été supprimé.
+Les dépendances sont maintenant figées et séparées : `requirements-api.txt`,
+`requirements-agent.txt` (exécution) et `requirements-dev.txt` (tests, lint).
 
-```text
-system_metrics_agent/
-├── app/
-│   ├── __init__.py
-│   ├── agent.py
-│   ├── api.py
-│   ├── collector.py
-│   ├── config.py
-│   ├── formatter.py
-│   └── sender.py
-├── tests/
-│   ├── test_api.py
-│   ├── test_collector.py
-│   ├── test_formatter.py
-│   └── test_sender.py
-├── .env.example
-├── requirements.txt
-└── README.md
-```
+**Choix Docker.** Image `python:3.12.15-slim-trixie` : tag précis pour des
+builds reproductibles, slim (glibc) pour garder les wheels `psutil`
+précompilées, contrairement à alpine (musl) qui impose de compiler.
+Build **multi-stage** : les dépendances sont installées dans un venv
+(`/opt/venv`) à l'étape builder, puis seul ce venv et le code sont copiés.
+`requirements` copié avant le code (cache), `pip --no-cache-dir`,
+`.dockerignore` strict, tests retirés de l'image. Utilisateur **non-root**
+(uid 10001), aucun `.env` ni secret dans l'image, configuration injectée par
+variables d'environnement. API : `uvicorn` sans `--reload`, `--host 0.0.0.0`,
+`EXPOSE 8000`, `HEALTHCHECK` en Python (pas de `curl` dans slim).
 
-## Installation
+**Commande `uptime`.** Absente de l'image slim, elle est fournie par le
+paquet Debian `procps`, ajouté à l'image de l'agent uniquement
+(`--no-install-recommends`, listes apt supprimées).
 
-Créer un environnement virtuel :
+**Conteneur et hôte.** Dans un conteneur, `psutil` lit le `/proc` du
+conteneur : le hostname est l'ID du conteneur et le CPU/RAM reflètent ses
+limites (cgroups), pas la machine. Pour surveiller un vrai serveur, il faut
+lancer l'agent avec `pid: host` et monter `/proc` de l'hôte en lecture seule,
+ou l'installer directement sur l'hôte (service systemd).
 
-```bash
-python -m venv .venv
-```
+**Tailles d'images** (`docker images`) : API `___ Mo`, agent `___ Mo`.
 
-Linux/macOS :
+**Monitoring (ajout).** L'API expose `GET /prometheus` (format Prometheus) :
+CPU, RAM, charge et date du dernier envoi de chaque agent. Prometheus la
+scrape toutes les 10 s et évalue 4 alertes : `ApiDown`, `AgentSilent`
+(aucune donnée depuis 30 s), `HighCpuUsage` (> 85 %), `HighMemoryUsage`
+(> 90 %). Grafana est provisionné automatiquement (source + tableau de bord).
 
-```bash
-source .venv/bin/activate
-```
+**Échec volontaire.** `<décrire : image de base ancienne, Trivy rouge, push
+bloqué, puis correction>`
 
-Windows :
+**Difficultés rencontrées.** `<à compléter>`
 
-```powershell
-.venv\Scripts\Activate.ps1
-```
-
-Installer les dépendances :
+## Lancer en local
 
 ```bash
-pip install -r requirements.txt
+cp .env.example .env          # puis modifier GRAFANA_ADMIN_PASSWORD
+docker compose up --build     # API + agent
+curl http://localhost:8000/metrics/latest
 ```
 
-Créer le fichier de configuration :
+Avec le monitoring :
 
 ```bash
-cp .env.example .env
+docker compose -f docker-compose.yml -f docker-compose.monitoring.yml up --build
 ```
 
-Sous Windows, copier manuellement `.env.example` en `.env`.
+| Service    | URL                                   |
+| ---------- | ------------------------------------- |
+| API (docs) | http://localhost:8000/docs            |
+| Prometheus | http://localhost:9090 (onglet Alerts) |
+| Grafana    | http://localhost:3000                 |
 
-## Démarrer l'API FastAPI
+Hors conteneur (Python 3.11+) :
 
 ```bash
-uvicorn app.api:app --reload
-```
-
-L'API est alors disponible sur :
-
-```text
-http://127.0.0.1:8000
-```
-
-Documentation interactive FastAPI :
-
-```text
-http://127.0.0.1:8000/docs
-```
-
-## Démarrer l'agent
-
-Dans un deuxième terminal :
-
-```bash
-python -m app.agent
-```
-
-L'agent collecte les métriques selon l'intervalle défini dans `.env`
-puis les envoie automatiquement vers `METRICS_ENDPOINT`.
-
-## Exemple de configuration
-
-```env
-METRICS_ENDPOINT=http://127.0.0.1:8000/metrics
-COLLECTION_INTERVAL=5
-REQUEST_TIMEOUT=5
-```
-
-Pour envoyer vers un webhook externe, remplacer simplement :
-
-```env
-METRICS_ENDPOINT=https://example.com/webhook
-```
-
-## Exemple de métrique envoyée
-
-```json
-{
-  "agent": "system-metrics-agent",
-  "event_type": "system_metrics",
-  "data": {
-    "timestamp": "2026-08-27T12:00:00.000000+00:00",
-    "hostname": "server-01",
-    "cpu": {
-      "percent": 23.4,
-      "logical_cores": 8
-    },
-    "memory": {
-      "total_bytes": 16777216000,
-      "available_bytes": 8000000000,
-      "used_bytes": 7777216000,
-      "percent": 48.2
-    },
-    "system": {
-      "load_1m": 0.12,
-      "load_5m": 0.18,
-      "load_15m": 0.20
-    }
-  }
-}
+pip install -r requirements-dev.txt
+uvicorn app.api:app                       # terminal 1
+METRICS_ENDPOINT=http://127.0.0.1:8000/metrics python -m app.agent   # terminal 2
+pytest -q --cov=app
 ```
 
 ## Endpoints
 
-### Vérifier l'état de l'API
+| Méthode | Chemin            | Rôle                               |
+| ------- | ----------------- | ---------------------------------- |
+| GET     | `/health`         | État de l'API                      |
+| POST    | `/metrics`        | Réception d'une métrique (agent)   |
+| GET     | `/metrics`        | Historique (1000 dernières)        |
+| GET     | `/metrics/latest` | Dernière métrique reçue            |
+| GET     | `/prometheus`     | Métriques au format Prometheus     |
 
-```http
-GET /health
-```
+## Pipeline CI/CD (`.github/workflows/ci-cd.yml`)
 
-Réponse :
+1. **test** : black + flake8, `pytest --cov`, analyse SonarQube, Quality Gate
+   bloquante.
+2. **build-scan-push** (`needs: test`, matrice `api` / `agent`) : build
+   `load: true`, scan Trivy bloquant (HIGH/CRITICAL corrigeables), rapport
+   SARIF dans l'onglet Security, push `:<sha>` et `:latest` uniquement sur
+   `main`. Cache Buildx `type=gha`. Dependabot met à jour pip, Docker et
+   les actions.
 
-```json
-{
-  "status": "ok"
-}
-```
-
-### Envoyer des métriques
-
-```http
-POST /metrics
-```
-
-### Récupérer la dernière métrique
-
-```http
-GET /metrics/latest
-```
-
-## Tests
-
-Exécuter toute la suite :
-
-```bash
-pytest -q
-```
-
-Exécuter avec une couverture de code nécessite l'installation de
-`pytest-cov` :
-
-```bash
-pip install pytest-cov
-pytest --cov=app --cov-report=term-missing
-```
-
-## Robustesse
-
-Le projet gère notamment :
-
-- les erreurs d'exécution de `subprocess` ;
-- les timeouts ;
-- les erreurs de connexion HTTP ;
-- les réponses HTTP en erreur ;
-- les configurations invalides ;
-- les payloads incomplets ;
-- l'absence de métriques dans l'API.
-
-## Démonstration du flux
-
-```text
-┌──────────────────┐
-│ Système          │
-│ CPU / RAM        │
-└────────┬─────────┘
-         │
-         ▼
-┌──────────────────┐
-│ collector.py     │
-│ psutil           │
-│ subprocess       │
-└────────┬─────────┘
-         │
-         ▼
-┌──────────────────┐
-│ formatter.py     │
-│ Payload JSON     │
-└────────┬─────────┘
-         │
-         ▼
-┌──────────────────┐
-│ sender.py        │
-│ HTTP POST        │
-└────────┬─────────┘
-         │
-         ▼
-┌──────────────────┐
-│ FastAPI          │
-│ /metrics         │
-└──────────────────┘
-```
+Secrets GitHub requis : `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN` (Access
+Token), `SONAR_TOKEN`, `SONAR_HOST_URL`.

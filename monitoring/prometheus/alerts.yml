@@ -1,0 +1,38 @@
+groups:
+  - name: system-metrics
+    rules:
+      - alert: ApiDown
+        expr: up{job="system-metrics-api"} == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "L'API de métriques ne répond plus"
+          description: "Prometheus n'arrive plus à scraper {{ $labels.instance }} depuis 30 s."
+
+      - alert: AgentSilent
+        expr: time() - sma_agent_last_seen_timestamp_seconds > 30
+        for: 10s
+        labels:
+          severity: warning
+        annotations:
+          summary: "Agent silencieux : {{ $labels.hostname }}"
+          description: "Aucune métrique reçue de {{ $labels.hostname }} depuis plus de 30 s."
+
+      - alert: HighCpuUsage
+        expr: sma_cpu_percent > 85
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "CPU élevé sur {{ $labels.hostname }}"
+          description: "CPU à {{ $value | printf \"%.1f\" }} % depuis 1 minute."
+
+      - alert: HighMemoryUsage
+        expr: sma_memory_percent > 90
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Mémoire presque saturée sur {{ $labels.hostname }}"
+          description: "RAM à {{ $value | printf \"%.1f\" }} % depuis 1 minute."

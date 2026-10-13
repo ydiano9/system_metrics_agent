@@ -5,11 +5,12 @@ Agent Python qui collecte CPU, RAM et charge système (`psutil` + commande
 conteneurisation, un pipeline CI/CD sécurisé et un monitoring
 Prometheus + Grafana.
 
-> **Liens à compléter :**
-> Fork : `https://github.com/<vous>/system_metrics_agent` ·
-> Images : `https://hub.docker.com/r/<vous>/system-metrics-api` et
-> `https://hub.docker.com/r/<vous>/system-metrics-agent` ·
-> Pipeline vert : `<lien du run>` · Pipeline rouge : `<lien du run>`
+**Liens :**
+- Fork : https://github.com/ydiano9/system_metrics_agent
+- Image API : https://hub.docker.com/r/yombi99/system-metrics-api
+- Image agent : https://hub.docker.com/r/yombi99/system-metrics-agent
+- Exécutions du pipeline (vertes, et la rouge volontaire n°3) :
+  https://github.com/ydiano9/system_metrics_agent/actions
 
 ## Rapport
 
@@ -41,7 +42,10 @@ limites (cgroups), pas la machine. Pour surveiller un vrai serveur, il faut
 lancer l'agent avec `pid: host` et monter `/proc` de l'hôte en lecture seule,
 ou l'installer directement sur l'hôte (service systemd).
 
-**Tailles d'images** (`docker images`) : API `___ Mo`, agent `___ Mo`.
+**Tailles d'images** (compressées, Docker Hub) : API **50,34 Mo**, agent
+**46,79 Mo**. L'API est la plus lourde car FastAPI, Uvicorn et Pydantic
+pèsent plus que `psutil` + `requests` + `procps`. Tags publiés : `latest`
+et le SHA du commit.
 
 **Monitoring (ajout).** L'API expose `GET /prometheus` (format Prometheus) :
 CPU, RAM, charge et date du dernier envoi de chaque agent. Prometheus la
@@ -49,10 +53,19 @@ scrape toutes les 10 s et évalue 4 alertes : `ApiDown`, `AgentSilent`
 (aucune donnée depuis 30 s), `HighCpuUsage` (> 85 %), `HighMemoryUsage`
 (> 90 %). Grafana est provisionné automatiquement (source + tableau de bord).
 
-**Échec volontaire.** `<décrire : image de base ancienne, Trivy rouge, push
-bloqué, puis correction>`
+**Échec volontaire.** Un test a été cassé exprès sur `main`
+(`/health` attendu à `"ko"`). Le job `test` a échoué, le job
+`build-scan-push` a donc été sauté : aucune image n'a été poussée. Le test a
+ensuite été corrigé et le pipeline est redevenu vert.
 
-**Difficultés rencontrées.** `<à compléter>`
+**Difficultés rencontrées.**
+- Pipeline bloqué au démarrage : les annotations du job indiquaient un
+  compte GitHub verrouillé pour un problème de facturation. Le dépôt a été
+  migré vers un autre compte.
+- Push refusé : un jeton GitHub sans la permission `workflow` ne peut pas
+  modifier `.github/workflows/`. Il a fallu un jeton avec `repo` + `workflow`.
+- Erreurs de nommage de secrets (`DOCKER_TOKEN` au lieu de
+  `DOCKERHUB_TOKEN`) : le nom doit correspondre exactement au workflow.
 
 ## Lancer en local
 
@@ -74,24 +87,15 @@ docker compose -f docker-compose.yml -f docker-compose.monitoring.yml up --build
 | Prometheus | http://localhost:9090 (onglet Alerts) |
 | Grafana    | http://localhost:3000                 |
 
-Hors conteneur (Python 3.11+) :
-
-```bash
-pip install -r requirements-dev.txt
-uvicorn app.api:app                       # terminal 1
-METRICS_ENDPOINT=http://127.0.0.1:8000/metrics python -m app.agent   # terminal 2
-pytest -q --cov=app
-```
-
 ## Endpoints
 
-| Méthode | Chemin            | Rôle                               |
-| ------- | ----------------- | ---------------------------------- |
-| GET     | `/health`         | État de l'API                      |
-| POST    | `/metrics`        | Réception d'une métrique (agent)   |
-| GET     | `/metrics`        | Historique (1000 dernières)        |
-| GET     | `/metrics/latest` | Dernière métrique reçue            |
-| GET     | `/prometheus`     | Métriques au format Prometheus     |
+| Méthode | Chemin            | Rôle                             |
+| ------- | ----------------- | -------------------------------- |
+| GET     | `/health`         | État de l'API                    |
+| POST    | `/metrics`        | Réception d'une métrique (agent) |
+| GET     | `/metrics`        | Historique (1000 dernières)      |
+| GET     | `/metrics/latest` | Dernière métrique reçue          |
+| GET     | `/prometheus`     | Métriques au format Prometheus   |
 
 ## Pipeline CI/CD (`.github/workflows/ci-cd.yml`)
 
@@ -100,8 +104,7 @@ pytest -q --cov=app
 2. **build-scan-push** (`needs: test`, matrice `api` / `agent`) : build
    `load: true`, scan Trivy bloquant (HIGH/CRITICAL corrigeables), rapport
    SARIF dans l'onglet Security, push `:<sha>` et `:latest` uniquement sur
-   `main`. Cache Buildx `type=gha`. Dependabot met à jour pip, Docker et
-   les actions.
+   `main`. Cache Buildx `type=gha`.
 
-Secrets GitHub requis : `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN` (Access
-Token), `SONAR_TOKEN`, `SONAR_HOST_URL`.
+Secrets GitHub requis : `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`,
+`SONAR_TOKEN`, `SONAR_HOST_URL`.

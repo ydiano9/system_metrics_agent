@@ -1,0 +1,49 @@
+# syntax=docker/dockerfile:1
+
+# Même image de base que l'API (voir Dockerfile.api pour la justification)
+# ---------- Étape 1 : builder ----------
+FROM python:3.12.15-slim-trixie AS builder
+
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1
+
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+WORKDIR /build
+COPY requirements-agent.txt .
+RUN pip install --no-cache-dir -r requirements-agent.txt
+
+# ---------- Étape 2 : image finale ----------
+FROM python:3.12.15-slim-trixie AS runtime
+
+LABEL org.opencontainers.image.title="system-metrics-agent" \
+      org.opencontainers.image.source="https://github.com/Mficius/system_metrics_agent"
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/opt/venv/bin:$PATH"
+
+# La commande `uptime` (appelée par collector.py via subprocess) est
+# absente de l'image slim. Elle est fournie par le paquet "procps".
+# --no-install-recommends + nettoyage des listes apt = surcoût minimal.
+# Version apt non figée : on veut les correctifs de sécurité Debian.
+# hadolint ignore=DL3008
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends procps \
+ && rm -rf /var/lib/apt/lists/* \
+ && groupadd --system --gid 10001 app \
+ && useradd --system --uid 10001 --gid app --no-create-home \
+    --shell /usr/sbin/nologin app
+
+WORKDIR /srv
+COPY --from=builder /opt/venv /opt/venv
+COPY --chown=app:app app/ ./app/
+RUN rm -rf ./app/tests
+
+USER app
+
+# Pas de port exposé : l'agent émet des requêtes, il n'en reçoit pas.
+# Pas de HEALTHCHECK HTTP pour la même raison ; Compose le redémarre
+# s'il s'arrête (restart: unless-stopped).
+CMD ["python", "-m", "app.agent"]

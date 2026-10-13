@@ -1,0 +1,7 @@
+# Outils de test et de qualité (CI et poste de développement)
+-r requirements.txt
+pytest==9.1.1
+pytest-cov==7.1.0
+httpx2==2.13.1
+flake8==7.4.1
+black==26.10.1

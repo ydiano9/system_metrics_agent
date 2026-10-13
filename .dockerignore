@@ -1,1 +1,22 @@
+# Le contexte de build ne doit contenir que le strict nécessaire
+.git
+.github
+.gitignore
+.dockerignore
+.venv
+venv
 .env
+.env.*
+!.env.example
+__pycache__
+*.pyc
+.pytest_cache
+.coverage
+coverage.xml
+htmlcov
+.scannerwork
+monitoring
+docker-compose*.yml
+Dockerfile*
+*.md
+sonar-project.properties
